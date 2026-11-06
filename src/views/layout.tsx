@@ -12,6 +12,8 @@ export interface PageCtx {
   messages: Message[];
   ads: (placement: AdPlacement) => Ad[];
   timeZone: string;
+  /** ブラウザで写真を縮小するときの長辺 */
+  photoMaxSide: number;
   tab?: Tab;
 }
 

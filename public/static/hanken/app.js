@@ -14,13 +14,52 @@
     sync();
   });
 
-  // 写真のプレビュー
+  // 写真を送る前にブラウザで縮小する：向きを直し、長辺を data-max-side px 以下の JPEG にする。
+  // うまくいかないとき（古いブラウザなど）は元の写真のまま送り、サーバー側で10MBまで受け付ける。
+  function shrink(file, side) {
+    if (!window.createImageBitmap || !window.DataTransfer || !/^image\//.test(file.type)) return Promise.resolve(file);
+    return createImageBitmap(file, { imageOrientation: 'from-image' }).then(function (bmp) {
+      var scale = Math.min(1, side / Math.max(bmp.width, bmp.height));
+      var canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bmp.width * scale));
+      canvas.height = Math.max(1, Math.round(bmp.height * scale));
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff'; // 透明な部分は白に
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      if (bmp.close) bmp.close();
+      return new Promise(function (ok) {
+        canvas.toBlob(function (blob) {
+          ok(blob ? new File([blob], 'photo.jpg', { type: 'image/jpeg' }) : file);
+        }, 'image/jpeg', 0.85);
+      });
+    }).catch(function () { return file; });
+  }
+
+  var pending = 0;
+  function setBusy(form, busy) {
+    if (!form) return;
+    form.querySelectorAll('button[type=submit]').forEach(function (b) { b.disabled = busy; });
+  }
+
   document.querySelectorAll('input[type=file]').forEach(function (f) {
     var prev = document.querySelector('[data-preview-for="' + f.id + '"]');
-    if (!prev) return;
+    var side = Number(f.dataset.maxSide) || 1280;
     f.addEventListener('change', function () {
       var file = f.files && f.files[0];
-      prev.style.backgroundImage = file ? 'url(' + URL.createObjectURL(file) + ')' : '';
+      if (prev) prev.style.backgroundImage = file ? 'url(' + URL.createObjectURL(file) + ')' : '';
+      if (!file) return;
+      pending++;
+      setBusy(f.form, true);
+      shrink(file, side).then(function (small) {
+        if (small !== file && f.files && f.files[0] === file) {
+          var dt = new DataTransfer();
+          dt.items.add(small);
+          f.files = dt.files;
+        }
+      }).finally(function () {
+        if (--pending === 0) setBusy(f.form, false);
+      });
     });
   });
 

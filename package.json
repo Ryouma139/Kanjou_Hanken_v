@@ -1,25 +1,29 @@
 {
   "name": "kanjou-hanken",
   "version": "1.0.0",
-  "description": "感情の半券（TypeScript版）— 本・映画・ドラマを観る前と後の気持ちを記録する",
+  "description": "感情の半券（TypeScript版）— 本・映画・ドラマを観る前と後の気持ちを記録する。Cloudflare Workers + Neon + R2",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "start": "tsx src/server.ts",
+    "dev:cf": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "tsx src/cli/migrate.ts",
     "createsuperuser": "tsx src/cli/createsuperuser.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@hono/node-server": "^2.1.6",
-    "hono": "^4.13.16",
-    "sharp": "^0.35.5"
+    "@neondatabase/serverless": "^1.2.0",
+    "hono": "^4.13.16"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
     "@types/node": "^24.19.2",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "wrangler": "^4.158.0"
   },
   "engines": {
     "node": ">=22.13"

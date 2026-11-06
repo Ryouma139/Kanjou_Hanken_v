@@ -11,8 +11,8 @@ import { Errs } from "./layout.tsx";
 const emoVar = (k: string) => `--c:var(--e-${k})`;
 
 /** 観る前／観た後の入力ブロック（気持ち・気分・写真・ひとこと） */
-export const Phase: FC<{ prefix: "before" | "after"; title: string; eyebrow: string; form: FormState }> = ({
-  prefix, title, eyebrow, form,
+export const Phase: FC<{ prefix: "before" | "after"; title: string; eyebrow: string; form: FormState; maxSide: number }> = ({
+  prefix, title, eyebrow, form, maxSide,
 }) => {
   const n = (f: string) => `${prefix}_${f}`;
   const id = (f: string) => `id_${n(f)}`;
@@ -45,7 +45,7 @@ export const Phase: FC<{ prefix: "before" | "after"; title: string; eyebrow: str
         <div class="photo-prev" data-preview-for={id("photo")}></div>
         <div class="photo-side">
           <label class="filebtn">
-            <input type="file" name={n("photo")} id={id("photo")} accept="image/*" />写真を選ぶ
+            <input type="file" name={n("photo")} id={id("photo")} accept="image/*" data-max-side={maxSide} />写真を選ぶ
           </label>
           <span class="small muted">そのときの景色や表情、気持ちに近いイメージを一枚。なくても大丈夫です。</span>
           <Errs list={form.errors[n("photo")]} />

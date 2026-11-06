@@ -14,8 +14,8 @@ let dummyHash: Promise<string> | null = null;
 export function accountRoutes() {
   const app = new Hono<AppEnv>();
 
-  app.get("/login/", (c) =>
-    render(c, <LoginPage ctx={pageCtx(c)} username="" next={c.req.query("next") ?? ""} failed={false} />),
+  app.get("/login/", async (c) =>
+    render(c, <LoginPage ctx={await pageCtx(c)} username="" next={c.req.query("next") ?? ""} failed={false} />),
   );
 
   app.post("/login/", async (c) => {
@@ -23,34 +23,34 @@ export function accountRoutes() {
     const username = typeof body.username === "string" ? body.username.trim() : "";
     const password = typeof body.password === "string" ? body.password : "";
     const next = typeof body.next === "string" ? body.next : "";
-    const user = username ? c.var.app.repo.userByName(username) : null;
+    const user = username ? await c.var.app.repo.userByName(username) : null;
     const ok = user
       ? await checkPassword(password, user.password)
       : (await checkPassword(password, await (dummyHash ??= hashPassword("dummy-password"))), false);
     if (!user || !ok) {
-      return render(c, <LoginPage ctx={pageCtx(c)} username={username} next={next} failed />);
+      return render(c, <LoginPage ctx={await pageCtx(c)} username={username} next={next} failed />);
     }
-    login(c, user);
+    await login(c, user);
     return c.redirect(safeNext(next, AFTER_LOGIN));
   });
 
-  app.post("/logout/", (c) => {
-    logout(c);
+  app.post("/logout/", async (c) => {
+    await logout(c);
     return c.redirect("/accounts/login/");
   });
 
   app.get("/signup/", async (c) => {
     if (c.var.user) return c.redirect("/");
-    return render(c, <SignupPage ctx={pageCtx(c)} form={{ values: {}, errors: {} }} />);
+    return render(c, <SignupPage ctx={await pageCtx(c)} form={{ values: {}, errors: {} }} />);
   });
 
   app.post("/signup/", async (c) => {
     if (c.var.user) return c.redirect("/");
     const { repo } = c.var.app;
-    const r = validateSignup(await c.req.parseBody(), (name) => !!repo.userByName(name));
-    if (!r.ok) return render(c, <SignupPage ctx={pageCtx(c)} form={r.state} />);
-    const user = repo.createUser(r.data.username, await hashPassword(r.data.password));
-    login(c, user);
+    const r = await validateSignup(await c.req.parseBody(), async (name) => !!(await repo.userByName(name)));
+    if (!r.ok) return render(c, <SignupPage ctx={await pageCtx(c)} form={r.state} />);
+    const user = await repo.createUser(r.data.username, await hashPassword(r.data.password));
+    await login(c, user);
     return c.redirect(AFTER_LOGIN);
   });
 

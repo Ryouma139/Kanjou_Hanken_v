@@ -1,11 +1,11 @@
-/** 入力の検査。Django版の forms.py に相当。写真はここで向き補正・縮小まで済ませる。 */
+/** 入力の検査。Django版の forms.py に相当。写真の縮小はブラウザ側で済んでいる。 */
 import { PASSWORD_HELP, validatePassword } from "./auth.ts";
 import type { Config } from "./config.ts";
 import {
   isAdPlacement, isEmotion, isKind, isShare,
   type AdPlacement, type Emotion, type Kind, type Share,
 } from "./emotions.ts";
-import { NotAnImage, shrinkPhoto } from "./photos.ts";
+import { sniffImage, type ImageFile } from "./photos.ts";
 
 export type Body = Record<string, string | File | (string | File)[]>;
 export type Values = Record<string, string>;
@@ -105,23 +105,21 @@ class Reader {
     return v;
   }
 
-  /** 画像ファイル。選ばれていなければ null。縮小済みの JPEG を返す。 */
-  async image(name: string, maxBytes: number, side: number, tooBig = MSG.photoSize): Promise<Buffer | null> {
+  /** 画像ファイル。選ばれていなければ null。中身が JPEG / PNG / WebP / GIF でなければエラー。 */
+  async image(name: string, maxBytes: number, tooBig = MSG.photoSize): Promise<ImageFile | null> {
     const r = this.raw(name);
-    if (!(r instanceof File) || r.size === 0) return null;
+    if (typeof r === "string" || !r || r.size === 0) return null;
     if (r.size > maxBytes) {
       this.add(name, tooBig);
       return null;
     }
-    try {
-      return await shrinkPhoto(Buffer.from(await r.arrayBuffer()), side);
-    } catch (e) {
-      if (e instanceof NotAnImage) {
-        this.add(name, MSG.image);
-        return null;
-      }
-      throw e;
+    const data = new Uint8Array(await r.arrayBuffer());
+    const kind = sniffImage(data);
+    if (!kind) {
+      this.add(name, MSG.image);
+      return null;
     }
+    return { data, ...kind };
   }
 }
 
@@ -140,7 +138,7 @@ export interface PhaseData {
   emo: Emotion;
   mood: number;
   note: string;
-  photo: Buffer | null;
+  photo: ImageFile | null;
 }
 
 export const NOTE_PLACEHOLDER = {
@@ -157,7 +155,7 @@ async function readPhase(f: Reader, prefix: "before" | "after", cfg: Config, req
   });
   const mood = f.int(`${prefix}_mood`, { required, min: 1, max: 10, requiredMsg: msgs.mood });
   const note = f.text(`${prefix}_note`, { max: 300 });
-  const photo = await f.image(`${prefix}_photo`, cfg.photoMaxBytes, cfg.photoMaxSide);
+  const photo = await f.image(`${prefix}_photo`, cfg.photoMaxBytes);
   return { emo, mood, note, photo };
 }
 
@@ -224,7 +222,7 @@ export interface SignupData {
   password: string;
 }
 
-export function validateSignup(body: Body, exists: (username: string) => boolean): Result<SignupData> {
+export async function validateSignup(body: Body, exists: (username: string) => Promise<boolean>): Promise<Result<SignupData>> {
   const f = new Reader(body);
   const username = f.text("username", { required: true, max: 150 });
   const p1 = f.text("password1", { required: true, strip: false });
@@ -233,7 +231,7 @@ export function validateSignup(body: Body, exists: (username: string) => boolean
   if (username) {
     if (!/^[\p{L}\p{N}_.@+-]+$/u.test(username))
       f.add("username", "有効なユーザー名を入力してください。この値は文字、数字、および @/./+/-/_ のみが含まれます。");
-    else if (exists(username)) f.add("username", "同じニックネームがすでに登録されています。");
+    else if (await exists(username)) f.add("username", "同じニックネームがすでに登録されています。");
   }
   if (p1 && p2 && p1 !== p2) f.add("password2", "確認用パスワードが一致しません。");
   else if (p2) for (const e of validatePassword(p2, username)) f.add("password2", e);
@@ -249,13 +247,13 @@ export interface WorkFormData {
   note: string;
   url: string;
   imageUrl: string;
-  /** 新しくアップロードされた画像（縮小済み） */
-  image: Buffer | null;
+  /** 新しくアップロードされた画像 */
+  image: ImageFile | null;
   clearImage: boolean;
 }
 
 export async function validateWork(
-  body: Body, cfg: Config, exists: (kind: Kind, title: string) => boolean,
+  body: Body, cfg: Config, exists: (kind: Kind, title: string) => Promise<boolean>,
 ): Promise<Result<WorkFormData>> {
   const f = new Reader(body);
   const kind = f.choice("kind", isKind, { required: true });
@@ -263,9 +261,9 @@ export async function validateWork(
   const note = f.text("note", { max: 120 });
   const url = f.url("url", 200);
   const imageUrl = f.url("image_url", 500);
-  const image = await f.image("image", cfg.photoMaxBytes, cfg.workImageMaxSide, "画像が大きすぎます。10MB以下の画像を選んでください。");
+  const image = await f.image("image", cfg.photoMaxBytes, "画像が大きすぎます。10MB以下の画像を選んでください。");
   const clearImage = f.bool("image_clear");
-  if (kind && title && exists(kind, title)) f.add("title", "同じ種類・作品名の作品がすでに登録されています。");
+  if (kind && title && (await exists(kind, title))) f.add("title", "同じ種類・作品名の作品がすでに登録されています。");
   if (!f.ok) return { ok: false, state: f.state() };
   return { ok: true, data: { kind: kind as Kind, title, note, url, imageUrl, image, clearImage } };
 }

@@ -1,10 +1,12 @@
 /** データの型と、DB への読み書き。Django版の models.py に相当。 */
-import type { DB } from "./db.ts";
+import type { DB, Row } from "./db.ts";
 import { localDate, type YMD } from "./dates.ts";
 import type { AdPlacement, Emotion, Kind, Share } from "./emotions.ts";
 
-type Row = Record<string, unknown>;
 const str = (v: unknown) => (v == null ? "" : String(v));
+/** DB の日時（Date または文字列）を ISO 文字列に */
+const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v == null ? "" : new Date(String(v)).toISOString());
+const isoOrNull = (v: unknown) => (v == null ? null : iso(v));
 const nowIso = () => new Date().toISOString();
 
 // ---------- User ----------
@@ -24,7 +26,7 @@ const toUser = (r: Row): User => ({
   password: str(r.password),
   fullName: str(r.full_name),
   isStaff: Boolean(r.is_staff),
-  dateJoined: str(r.date_joined),
+  dateJoined: iso(r.date_joined),
 });
 
 // ---------- Work ----------
@@ -36,7 +38,7 @@ export interface Work {
   title: string;
   note: string;
   url: string;
-  /** media 以下の相対パス（アップロードした画像） */
+  /** 保存した画像のキー（アップロードした画像） */
   image: string;
   imageUrl: string;
   createdAt: string;
@@ -51,11 +53,11 @@ const toWork = (r: Row): Work => ({
   url: str(r.url),
   image: str(r.image),
   imageUrl: str(r.image_url),
-  createdAt: str(r.created_at),
-  updatedAt: str(r.updated_at),
+  createdAt: iso(r.created_at),
+  updatedAt: iso(r.updated_at),
 });
 
-export const mediaUrl = (p: string) => (p ? `/media/${p}` : "");
+export const mediaUrl = (key: string) => (key ? `/media/${key}` : "");
 
 /** 表示する画像のURL。アップロードした画像を優先し、なければ画像URL。どちらもなければ空。 */
 export const coverUrl = (w: Pick<Work, "image" | "imageUrl"> | null | undefined) =>
@@ -83,7 +85,7 @@ const toAd = (r: Row): Ad => ({
   html: str(r.html),
   isActive: Boolean(r.is_active),
   order: Number(r.sort_order),
-  updatedAt: str(r.updated_at),
+  updatedAt: iso(r.updated_at),
 });
 
 export type AdInput = Pick<Ad, "name" | "placement" | "html" | "isActive" | "order">;
@@ -112,9 +114,9 @@ export interface Entry {
   afterPhoto: string;
   afterAt: string | null;
 
-  /** 結びついた作品（読み込んだときだけ） */
+  /** 結びついた作品 */
   work?: Work | null;
-  /** 記録した人（読み込んだときだけ） */
+  /** 記録した人 */
   user?: Pick<User, "id" | "username" | "fullName">;
 }
 
@@ -132,11 +134,12 @@ export function finishedOn(e: Entry, timeZone: string): YMD | null {
   return isDone(e) ? localDate(e.afterAt ?? e.createdAt, timeZone) : null;
 }
 
-const ENTRY_COLS = `e.*,
+const ENTRY_SELECT = `SELECT e.*,
   w.id AS w_id, w.kind AS w_kind, w.title AS w_title, w.note AS w_note, w.url AS w_url,
   w.image AS w_image, w.image_url AS w_image_url, w.created_at AS w_created_at, w.updated_at AS w_updated_at,
-  u.username AS u_username, u.full_name AS u_full_name`;
-const ENTRY_FROM = `entries e LEFT JOIN works w ON w.id = e.work_id JOIN users u ON u.id = e.user_id`;
+  u.username AS u_username, u.full_name AS u_full_name
+  FROM entries e LEFT JOIN works w ON w.id = e.work_id JOIN users u ON u.id = e.user_id`;
+const ENTRY_ORDER = `ORDER BY e.created_at DESC, e.id DESC`;
 
 function toEntry(r: Row): Entry {
   const sub = (prefix: string) =>
@@ -148,17 +151,17 @@ function toEntry(r: Row): Entry {
     kind: str(r.kind) as Kind,
     title: str(r.title),
     share: str(r.share) as Share,
-    createdAt: str(r.created_at),
+    createdAt: iso(r.created_at),
     beforeEmo: str(r.before_emo) as Emotion,
     beforeMood: Number(r.before_mood),
     beforeNote: str(r.before_note),
     beforePhoto: str(r.before_photo),
-    beforeAt: str(r.before_at),
+    beforeAt: iso(r.before_at),
     afterEmo: str(r.after_emo) as Emotion | "",
     afterMood: r.after_mood == null ? null : Number(r.after_mood),
     afterNote: str(r.after_note),
     afterPhoto: str(r.after_photo),
-    afterAt: r.after_at == null ? null : str(r.after_at),
+    afterAt: isoOrNull(r.after_at),
     work: r.w_id == null ? null : toWork(sub("w_")),
     user: { id: Number(r.user_id), username: str(r.u_username), fullName: str(r.u_full_name) },
   };
@@ -166,201 +169,234 @@ function toEntry(r: Row): Entry {
 
 export type NewEntry = Omit<Entry, "id" | "createdAt" | "work" | "user">;
 
-/** DB への読み書きをまとめたもの */
+/** DB への読み書きをまとめたもの（すべて非同期） */
 export class Repo {
   constructor(readonly db: DB) {}
 
+  private async one<T>(sql: string, params: unknown[], map: (r: Row) => T): Promise<T | null> {
+    const [r] = await this.db.query(sql, params);
+    return r ? map(r) : null;
+  }
+
+  private async many<T>(sql: string, params: unknown[], map: (r: Row) => T): Promise<T[]> {
+    return (await this.db.query(sql, params)).map(map);
+  }
+
+  async count(table: "works" | "ads" | "entries" | "users"): Promise<number> {
+    const [r] = await this.db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM ${table}`);
+    return Number(r?.n ?? 0);
+  }
+
   // ----- users -----
 
-  createUser(username: string, passwordHash: string, isStaff = false): User {
-    const r = this.db
-      .prepare("INSERT INTO users (username, password, is_staff, date_joined) VALUES (?, ?, ?, ?) RETURNING *")
-      .get(username, passwordHash, isStaff ? 1 : 0, nowIso());
-    return toUser(r as Row);
+  async createUser(username: string, passwordHash: string, isStaff = false): Promise<User> {
+    return (await this.one(
+      "INSERT INTO users (username, password, is_staff) VALUES ($1, $2, $3) RETURNING *",
+      [username, passwordHash, isStaff], toUser,
+    ))!;
   }
 
-  userById(id: number): User | null {
-    const r = this.db.prepare("SELECT * FROM users WHERE id = ?").get(id);
-    return r ? toUser(r as Row) : null;
+  userById(id: number) {
+    return this.one("SELECT * FROM users WHERE id = $1", [id], toUser);
   }
 
-  userByName(username: string): User | null {
-    const r = this.db.prepare("SELECT * FROM users WHERE username = ?").get(username);
-    return r ? toUser(r as Row) : null;
+  /** ニックネームは英字の大小を区別しない */
+  userByName(username: string) {
+    return this.one("SELECT * FROM users WHERE lower(username) = lower($1)", [username], toUser);
   }
 
-  setUserPassword(id: number, passwordHash: string, isStaff?: boolean) {
-    this.db.prepare("UPDATE users SET password = ? WHERE id = ?").run(passwordHash, id);
-    if (isStaff !== undefined) this.db.prepare("UPDATE users SET is_staff = ? WHERE id = ?").run(isStaff ? 1 : 0, id);
+  async setUserPassword(id: number, passwordHash: string, isStaff?: boolean) {
+    await this.db.query("UPDATE users SET password = $1, is_staff = COALESCE($2, is_staff) WHERE id = $3", [passwordHash, isStaff ?? null, id]);
+  }
+
+  // ----- sessions -----
+
+  async createSession(id: string, userId: number, expiresAt: string) {
+    await this.db.query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)", [id, userId, expiresAt]);
+  }
+
+  /** 期限内のセッションのユーザー */
+  sessionUser(id: string) {
+    return this.one(
+      "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = $1 AND s.expires_at > now()",
+      [id], toUser,
+    );
+  }
+
+  async deleteSession(id: string) {
+    await this.db.query("DELETE FROM sessions WHERE id = $1 OR expires_at < now()", [id]);
   }
 
   // ----- works -----
 
   /** 作品名が一致する作品（前後の空白・英字の大小は無視）。同じ種類を優先し、なければ種類違いでも同名のもの。 */
-  matchWork(kind: Kind, title: string): Work | null {
+  async matchWork(kind: Kind, title: string): Promise<Work | null> {
     const t = title.trim();
     if (!t) return null;
-    const r = this.db
-      .prepare("SELECT * FROM works WHERE title = ? COLLATE NOCASE ORDER BY (kind = ?) DESC, updated_at DESC LIMIT 1")
-      .get(t, kind);
-    return r ? toWork(r as Row) : null;
+    return this.one(
+      "SELECT * FROM works WHERE lower(title) = lower($1) ORDER BY (kind = $2) DESC, updated_at DESC LIMIT 1",
+      [t, kind], toWork,
+    );
   }
 
-  recentWorks(kind: Kind, limit: number): Work[] {
-    return this.db
-      .prepare("SELECT * FROM works WHERE kind = ? ORDER BY updated_at DESC, id DESC LIMIT ?")
-      .all(kind, limit)
-      .map((r) => toWork(r as Row));
+  recentWorks(kind: Kind, limit: number) {
+    return this.many("SELECT * FROM works WHERE kind = $1 ORDER BY updated_at DESC, id DESC LIMIT $2", [kind, limit], toWork);
   }
 
-  work(id: number): Work | null {
-    const r = this.db.prepare("SELECT * FROM works WHERE id = ?").get(id);
-    return r ? toWork(r as Row) : null;
+  work(id: number) {
+    return this.one("SELECT * FROM works WHERE id = $1", [id], toWork);
   }
 
-  works(opts: { kind?: Kind; q?: string } = {}): Work[] {
+  works(opts: { kind?: Kind; q?: string } = {}) {
     const where: string[] = [];
-    const args: string[] = [];
-    if (opts.kind) (where.push("kind = ?"), args.push(opts.kind));
-    if (opts.q) (where.push("title LIKE ? ESCAPE '\\'"), args.push(`%${opts.q.replace(/[\\%_]/g, "\\$&")}%`));
-    const sql = `SELECT * FROM works ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY updated_at DESC, id DESC`;
-    return this.db.prepare(sql).all(...args).map((r) => toWork(r as Row));
+    const args: unknown[] = [];
+    if (opts.kind) (args.push(opts.kind), where.push(`kind = $${args.length}`));
+    if (opts.q) (args.push(`%${opts.q.replace(/[\\%_]/g, "\\$&")}%`), where.push(`title ILIKE $${args.length}`));
+    return this.many(
+      `SELECT * FROM works ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY updated_at DESC, id DESC`,
+      args, toWork,
+    );
   }
 
-  workExists(kind: Kind, title: string, exceptId?: number): boolean {
-    return !!this.db
-      .prepare("SELECT 1 FROM works WHERE kind = ? AND title = ? AND id IS NOT ?")
-      .get(kind, title, exceptId ?? null);
+  async workExists(kind: Kind, title: string, exceptId?: number): Promise<boolean> {
+    const rows = await this.db.query(
+      "SELECT 1 FROM works WHERE kind = $1 AND title = $2 AND id IS DISTINCT FROM $3",
+      [kind, title, exceptId ?? null],
+    );
+    return rows.length > 0;
   }
 
-  saveWork(input: WorkInput, id?: number, at = nowIso()): Work {
+  async saveWork(input: WorkInput, id?: number, at = nowIso()): Promise<Work> {
     const args = [input.kind, input.title, input.note, input.url, input.image, input.imageUrl, at];
-    const r = id
-      ? this.db
-          .prepare("UPDATE works SET kind=?, title=?, note=?, url=?, image=?, image_url=?, updated_at=? WHERE id=? RETURNING *")
-          .get(...args, id)
-      : this.db
-          .prepare("INSERT INTO works (kind, title, note, url, image, image_url, updated_at, created_at) VALUES (?,?,?,?,?,?,?,?) RETURNING *")
-          .get(...args, at);
-    return toWork(r as Row);
+    return (await (id
+      ? this.one("UPDATE works SET kind=$1, title=$2, note=$3, url=$4, image=$5, image_url=$6, updated_at=$7 WHERE id=$8 RETURNING *", [...args, id], toWork)
+      : this.one("INSERT INTO works (kind, title, note, url, image, image_url, updated_at, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$7) RETURNING *", args, toWork)))!;
   }
 
-  deleteWork(id: number) {
-    this.db.prepare("DELETE FROM works WHERE id = ?").run(id);
+  async deleteWork(id: number) {
+    await this.db.query("DELETE FROM works WHERE id = $1", [id]);
   }
 
   /** まだ作品に結びついていない同名の半券を結びつける */
-  linkEntriesToWorks(title: string) {
-    const rows = this.db
-      .prepare("SELECT id, kind, title FROM entries WHERE work_id IS NULL AND title = ? COLLATE NOCASE")
-      .all(title.trim()) as Row[];
-    const upd = this.db.prepare("UPDATE entries SET work_id = ? WHERE id = ?");
+  async linkEntriesToWorks(title: string) {
+    const rows = await this.db.query<{ id: number; kind: Kind; title: string }>(
+      "SELECT id, kind, title FROM entries WHERE work_id IS NULL AND lower(title) = lower($1)",
+      [title.trim()],
+    );
     for (const r of rows) {
-      const w = this.matchWork(str(r.kind) as Kind, str(r.title));
-      if (w) upd.run(w.id, Number(r.id));
+      const w = await this.matchWork(r.kind, r.title);
+      if (w) await this.db.query("UPDATE entries SET work_id = $1 WHERE id = $2", [w.id, r.id]);
     }
   }
 
   // ----- ads -----
 
-  activeAds(placement: AdPlacement): Ad[] {
-    return this.db
-      .prepare("SELECT * FROM ads WHERE placement = ? AND is_active = 1 ORDER BY sort_order, updated_at DESC")
-      .all(placement)
-      .map((r) => toAd(r as Row));
+  /** 表示中の広告すべて（場所ごとに並び順） */
+  activeAds() {
+    return this.many("SELECT * FROM ads WHERE is_active ORDER BY placement, sort_order, updated_at DESC", [], toAd);
   }
 
-  ads(): Ad[] {
-    return this.db.prepare("SELECT * FROM ads ORDER BY placement, sort_order, updated_at DESC").all().map((r) => toAd(r as Row));
+  ads() {
+    return this.many("SELECT * FROM ads ORDER BY placement, sort_order, updated_at DESC", [], toAd);
   }
 
-  ad(id: number): Ad | null {
-    const r = this.db.prepare("SELECT * FROM ads WHERE id = ?").get(id);
-    return r ? toAd(r as Row) : null;
+  ad(id: number) {
+    return this.one("SELECT * FROM ads WHERE id = $1", [id], toAd);
   }
 
-  saveAd(input: AdInput, id?: number): Ad {
-    const args = [input.name, input.placement, input.html, input.isActive ? 1 : 0, input.order, nowIso()];
-    const r = id
-      ? this.db.prepare("UPDATE ads SET name=?, placement=?, html=?, is_active=?, sort_order=?, updated_at=? WHERE id=? RETURNING *").get(...args, id)
-      : this.db.prepare("INSERT INTO ads (name, placement, html, is_active, sort_order, updated_at) VALUES (?,?,?,?,?,?) RETURNING *").get(...args);
-    return toAd(r as Row);
+  async saveAd(input: AdInput, id?: number): Promise<Ad> {
+    const args = [input.name, input.placement, input.html, input.isActive, input.order];
+    return (await (id
+      ? this.one("UPDATE ads SET name=$1, placement=$2, html=$3, is_active=$4, sort_order=$5, updated_at=now() WHERE id=$6 RETURNING *", [...args, id], toAd)
+      : this.one("INSERT INTO ads (name, placement, html, is_active, sort_order) VALUES ($1,$2,$3,$4,$5) RETURNING *", args, toAd)))!;
   }
 
-  deleteAd(id: number) {
-    this.db.prepare("DELETE FROM ads WHERE id = ?").run(id);
+  async deleteAd(id: number) {
+    await this.db.query("DELETE FROM ads WHERE id = $1", [id]);
   }
 
   // ----- entries -----
 
-  insertEntry(e: NewEntry, createdAt = nowIso()): Entry {
-    const r = this.db
-      .prepare(
-        `INSERT INTO entries (user_id, work_id, kind, title, share, created_at,
-           before_emo, before_mood, before_note, before_photo, before_at,
-           after_emo, after_mood, after_note, after_photo, after_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
-      )
-      .get(e.userId, e.workId, e.kind, e.title, e.share, createdAt,
+  async insertEntry(e: NewEntry, createdAt = nowIso()): Promise<Entry> {
+    const [r] = await this.db.query<{ id: number }>(
+      `INSERT INTO entries (user_id, work_id, kind, title, share, created_at,
+         before_emo, before_mood, before_note, before_photo, before_at,
+         after_emo, after_mood, after_note, after_photo, after_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+      [e.userId, e.workId, e.kind, e.title, e.share, createdAt,
         e.beforeEmo, e.beforeMood, e.beforeNote, e.beforePhoto, e.beforeAt,
-        e.afterEmo, e.afterMood, e.afterNote, e.afterPhoto, e.afterAt) as Row;
-    return this.entry(Number(r.id))!;
+        e.afterEmo, e.afterMood, e.afterNote, e.afterPhoto, e.afterAt],
+    );
+    return (await this.entry(Number(r!.id)))!;
   }
 
-  entry(id: number): Entry | null {
-    const r = this.db.prepare(`SELECT ${ENTRY_COLS} FROM ${ENTRY_FROM} WHERE e.id = ?`).get(id);
-    return r ? toEntry(r as Row) : null;
+  entry(id: number) {
+    return this.one(`${ENTRY_SELECT} WHERE e.id = $1`, [id], toEntry);
   }
 
   /** 自分の半券だけ。他人のものは null（＝404）。 */
-  ownEntry(id: number, userId: number): Entry | null {
-    const e = this.entry(id);
-    return e && e.userId === userId ? e : null;
+  ownEntry(id: number, userId: number) {
+    return this.one(`${ENTRY_SELECT} WHERE e.id = $1 AND e.user_id = $2`, [id, userId], toEntry);
   }
 
   /** 自分の半券（新しい順） */
-  userEntries(userId: number): Entry[] {
-    return this.db
-      .prepare(`SELECT ${ENTRY_COLS} FROM ${ENTRY_FROM} WHERE e.user_id = ? ORDER BY e.created_at DESC, e.id DESC`)
-      .all(userId)
-      .map((r) => toEntry(r as Row));
+  userEntries(userId: number) {
+    return this.many(`${ENTRY_SELECT} WHERE e.user_id = $1 ${ENTRY_ORDER}`, [userId], toEntry);
+  }
+
+  /** 自分の、観る前と観た後がそろった半券 */
+  async userDoneEntries(userId: number): Promise<DoneEntry[]> {
+    return (await this.many(
+      `${ENTRY_SELECT} WHERE e.user_id = $1 AND e.after_emo <> '' AND e.after_mood IS NOT NULL ${ENTRY_ORDER}`,
+      [userId], toEntry,
+    )) as DoneEntry[];
+  }
+
+  /** 自分がいちばん最近記録した半券のうち、観る前の気持ちが候補に入っているもの */
+  async latestBeforeEmo(userId: number, among: string[]): Promise<Emotion | null> {
+    const [r] = await this.db.query<{ before_emo: Emotion }>(
+      "SELECT before_emo FROM entries WHERE user_id = $1 AND before_emo = ANY($2) ORDER BY created_at DESC, id DESC LIMIT 1",
+      [userId, among],
+    );
+    return r?.before_emo ?? null;
   }
 
   /** 共有された、観る前と観た後がそろった半券 */
-  sharedDoneEntries(): DoneEntry[] {
-    return this.db
-      .prepare(
-        `SELECT ${ENTRY_COLS} FROM ${ENTRY_FROM}
-         WHERE e.share != 'private' AND e.after_emo != '' AND e.after_mood IS NOT NULL
-         ORDER BY e.created_at DESC, e.id DESC`,
-      )
-      .all()
-      .map((r) => toEntry(r as Row) as DoneEntry);
+  async sharedDoneEntries(): Promise<DoneEntry[]> {
+    return (await this.many(
+      `${ENTRY_SELECT} WHERE e.share <> 'private' AND e.after_emo <> '' AND e.after_mood IS NOT NULL ${ENTRY_ORDER}`,
+      [], toEntry,
+    )) as DoneEntry[];
   }
 
-  allEntries(): Entry[] {
-    return this.db
-      .prepare(`SELECT ${ENTRY_COLS} FROM ${ENTRY_FROM} ORDER BY e.created_at DESC, e.id DESC`)
-      .all()
-      .map((r) => toEntry(r as Row));
+  allEntries() {
+    return this.many(`${ENTRY_SELECT} ${ENTRY_ORDER}`, [], toEntry);
   }
 
-  saveAfter(id: number, a: Pick<Entry, "afterEmo" | "afterMood" | "afterNote" | "afterPhoto" | "afterAt">) {
-    this.db
-      .prepare("UPDATE entries SET after_emo=?, after_mood=?, after_note=?, after_photo=?, after_at=? WHERE id=?")
-      .run(a.afterEmo, a.afterMood, a.afterNote, a.afterPhoto, a.afterAt, id);
+  async saveAfter(id: number, a: Pick<Entry, "afterEmo" | "afterMood" | "afterNote" | "afterPhoto" | "afterAt">) {
+    await this.db.query(
+      "UPDATE entries SET after_emo=$1, after_mood=$2, after_note=$3, after_photo=$4, after_at=$5 WHERE id=$6",
+      [a.afterEmo, a.afterMood, a.afterNote, a.afterPhoto, a.afterAt, id],
+    );
   }
 
-  setShare(id: number, share: Share) {
-    this.db.prepare("UPDATE entries SET share = ? WHERE id = ?").run(share, id);
+  async setShare(id: number, share: Share) {
+    await this.db.query("UPDATE entries SET share = $1 WHERE id = $2", [share, id]);
   }
 
-  deleteEntry(id: number) {
-    this.db.prepare("DELETE FROM entries WHERE id = ?").run(id);
+  /**
+   * その写真を見てよいか。作品の画像はだれでも。半券の写真は、自分のものか共有されている半券のものだけ。
+   */
+  async photoVisible(key: string, userId: number): Promise<boolean> {
+    if (key.startsWith("works/")) return true;
+    const rows = await this.db.query(
+      "SELECT 1 FROM entries WHERE (before_photo = $1 OR after_photo = $1) AND (user_id = $2 OR share <> 'private') LIMIT 1",
+      [key, userId],
+    );
+    return rows.length > 0;
   }
 
-  /** 写真ファイルの後片付け用：ユーザーの全写真のパス */
-  photosOf(entries: Entry[]): string[] {
-    return entries.flatMap((e) => [e.beforePhoto, e.afterPhoto]).filter(Boolean);
+  async deleteEntry(id: number) {
+    await this.db.query("DELETE FROM entries WHERE id = $1", [id]);
   }
 }

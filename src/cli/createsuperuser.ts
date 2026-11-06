@@ -1,11 +1,11 @@
 /**
  * 管理画面に入れるユーザーを作る（すでにいればパスワードを変えて管理者にする）。
  *   npm run createsuperuser -- <ニックネーム> <パスワード>
+ * DATABASE_URL を付けると Neon（本番）に、付けなければ手元の PGlite に作る。
  */
 import { hashPassword, validatePassword } from "../auth.ts";
-import { loadConfig } from "../config.ts";
-import { openDb } from "../db.ts";
 import { Repo } from "../models.ts";
+import { connect } from "./db.ts";
 
 const [username, password] = process.argv.slice(2);
 if (!username || !password) {
@@ -18,13 +18,15 @@ if (problems.length) {
   process.exit(1);
 }
 
-const repo = new Repo(openDb(loadConfig().dbPath));
+const { db, where, close } = await connect();
+const repo = new Repo(db);
 const hash = await hashPassword(password);
-const existing = repo.userByName(username);
+const existing = await repo.userByName(username);
 if (existing) {
-  repo.setUserPassword(existing.id, hash, true);
-  console.log(`「${existing.username}」を管理者にし、パスワードを更新しました。`);
+  await repo.setUserPassword(existing.id, hash, true);
+  console.log(`${where}：「${existing.username}」を管理者にし、パスワードを更新しました。`);
 } else {
-  repo.createUser(username, hash, true);
-  console.log(`管理者「${username}」を作成しました。`);
+  await repo.createUser(username, hash, true);
+  console.log(`${where}：管理者「${username}」を作成しました。`);
 }
+await close();

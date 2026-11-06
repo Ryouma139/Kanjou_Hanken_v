@@ -42,14 +42,14 @@ export const RecordPage: FC<{ ctx: PageCtx; form: FormState }> = ({ ctx, form })
           <Errs list={form.errors.title} />
         </div>
 
-        <div class="panel"><Phase prefix="before" title="観る前の気持ち" eyebrow="Before" form={form} /></div>
+        <div class="panel"><Phase prefix="before" title="観る前の気持ち" eyebrow="Before" form={form} maxSide={ctx.photoMaxSide} /></div>
 
         <label class="check">
           <input type="checkbox" name="both" id="id_both" checked={both} /> もう観終わった（観た後の気持ちも一緒に記録する）
         </label>
 
         <div class="panel" id="after-panel" hidden={!both}>
-          <Phase prefix="after" title="観た後の気持ち" eyebrow="After" form={form} />
+          <Phase prefix="after" title="観た後の気持ち" eyebrow="After" form={form} maxSide={ctx.photoMaxSide} />
         </div>
 
         <div class="panel">
@@ -93,7 +93,7 @@ export const AfterPage: FC<{ ctx: PageCtx; entry: Entry; form: FormState }> = ({
         </div>
       </div>
 
-      <div class="panel"><Phase prefix="after" title="観た後の気持ち" eyebrow="After" form={form} /></div>
+      <div class="panel"><Phase prefix="after" title="観た後の気持ち" eyebrow="After" form={form} maxSide={ctx.photoMaxSide} /></div>
 
       <div class="actions">
         <button class="btn" type="submit">観た後を記録する</button>
