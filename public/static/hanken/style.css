@@ -1,10 +1,12 @@
 /* 感情の半券
    Layout: a ticket-stub book — each record is a stub torn in two (before | after),
    joined by a perforation that carries the change. */
+/* 配色：やわらかい肌色（ベージュ）の紙に、濃い茶色の文字。端末がダークモードでも同じ配色にする。
+   文字色はどれも背景に対して 4.5:1 以上のコントラスト。 */
 :root{
-  --paper:#FFF6EC; --card:#FFFFFF; --ink:#2B1D3F; --muted:#6F6283; --line:#F1DCCB; --soft:#FFF0E2;
-  --accent:#D81B60; --accent-ink:#FFFFFF; --up:#0A8443; --down:#D63A22;
-  --dot:rgba(216,27,96,.09);
+  --paper:#F6EBDD; --card:#FFFAF4; --ink:#3B2A1E; --muted:#7A6352; --line:#E8D5C2; --soft:#F3E6D7;
+  --accent:#A24B27; --accent-ink:#FFFFFF; --up:#276B33; --down:#B23B22;
+  --dot:rgba(140,95,60,.08);
   --e-joy:#FFB300; --e-excited:#FF6D2E; --e-calm:#1FB37A; --e-moved:#FF4FA3; --e-lonely:#1EA7D6;
   --e-sad:#3D6BFF; --e-anxious:#9B5CFF; --e-irritated:#FF3B3B; --e-tired:#8C93A8; --e-numb:#C2A27A;
   --f-display:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho",serif;
@@ -12,13 +14,6 @@
   --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
   color-scheme:light;
 }
-@media (prefers-color-scheme: dark){:root{
-  --paper:#1B1229; --card:#251A38; --ink:#FBF3FF; --muted:#B9A9CF; --line:#3D2F57; --soft:#20162F;
-  --accent:#FF6FA5; --accent-ink:#1E0A16; --up:#4CE0A0; --down:#FF8A70;
-  --dot:rgba(255,111,165,.08);
-  --e-joy:#FFD23F; --e-excited:#FF9150; --e-calm:#3EE0A0; --e-moved:#FF7AC0; --e-lonely:#4CC9F0;
-  --e-sad:#7B9BFF; --e-anxious:#B98CFF; --e-irritated:#FF6B6B; --e-tired:#AEB4C6; --e-numb:#D8BC94;
-  color-scheme:dark}}
 
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -119,7 +114,7 @@ label.seg input:checked+span{background:var(--accent);color:var(--accent-ink);bo
 .half .lbl{font:500 11px var(--f-mono);letter-spacing:.12em;color:var(--muted)}
 .tile{aspect-ratio:4/3;max-width:100%;border-radius:8px;position:relative;overflow:hidden;background:var(--soft)}
 .tile img{width:100%;height:100%;object-fit:cover;display:block}
-.tile.emo{background:radial-gradient(120% 90% at 20% 15%,color-mix(in srgb,var(--c) 70%,var(--card)) 0%,color-mix(in srgb,var(--c) 30%,var(--card)) 55%,var(--card) 100%)}
+.tile.emo{background:radial-gradient(120% 90% at 20% 15%,color-mix(in srgb,var(--c) 42%,var(--card)) 0%,color-mix(in srgb,var(--c) 16%,var(--card)) 55%,var(--card) 100%)}
 .tile.emo b{position:absolute;right:10px;bottom:6px;font:800 28px var(--f-display);color:color-mix(in srgb,var(--c) 85%,var(--ink))}
 .tile.empty{border:1px dashed var(--line);display:grid;place-items:center;color:var(--muted);font-size:13px}
 .meta{display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap}
@@ -172,7 +167,7 @@ label.seg input:checked+span{background:var(--accent);color:var(--accent-ink);bo
 .work{scroll-snap-align:start;min-width:0}
 .work-in{display:flex;flex-direction:column;gap:4px;color:var(--ink);text-decoration:none}
 .cover{position:relative;aspect-ratio:2/3;border-radius:10px;overflow:hidden;display:grid;place-items:center;border:1px solid var(--line);
-  background:radial-gradient(120% 90% at 20% 15%,color-mix(in srgb,var(--c) 70%,var(--card)) 0%,color-mix(in srgb,var(--c) 28%,var(--card)) 60%,var(--card) 100%);transition:transform .15s ease}
+  background:radial-gradient(120% 90% at 20% 15%,color-mix(in srgb,var(--c) 42%,var(--card)) 0%,color-mix(in srgb,var(--c) 16%,var(--card)) 60%,var(--card) 100%);transition:transform .15s ease}
 .cover.kind-movie{--c:var(--e-excited)} .cover.kind-book{--c:var(--e-calm)} .cover.kind-drama{--c:var(--e-moved)}
 .cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 .cover b{font:800 18px var(--f-display);color:color-mix(in srgb,var(--c) 80%,var(--ink))}
