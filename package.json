@@ -1,0 +1,27 @@
+{
+  "name": "kanjou-hanken",
+  "version": "1.0.0",
+  "description": "感情の半券（TypeScript版）— 本・映画・ドラマを観る前と後の気持ちを記録する",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "createsuperuser": "tsx src/cli/createsuperuser.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.6",
+    "hono": "^4.13.16",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}
