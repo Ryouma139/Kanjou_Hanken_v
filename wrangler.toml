@@ -1,0 +1,23 @@
+name = "kanjou-hanken"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+
+# CSS・JS（public/static/...）は Worker を通さずに配信する
+[assets]
+directory = "./public"
+
+[vars]
+HANKEN_ENV = "production"
+HANKEN_TIME_ZONE = "Asia/Tokyo"
+
+# 写真の置き場所（先に `npx wrangler r2 bucket create kanjou-hanken-media` で作る）
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "kanjou-hanken-media"
+
+# DATABASE_URL（Neon の接続文字列）は秘密の値なのでここには書かない：
+#   npx wrangler secret put DATABASE_URL
+# 手元の `npm run dev:cf` では .dev.vars に書く（.dev.vars.example を参照）
+
+[observability]
+enabled = true

@@ -1,10 +1,12 @@
 import type { Message } from "./auth.ts";
 import type { Config } from "./config.ts";
 import type { Repo, User } from "./models.ts";
+import type { Storage } from "./storage.ts";
 
 /** すべてのリクエストで使える共有物 */
 export interface AppDeps {
   repo: Repo;
+  storage: Storage;
   config: Config;
 }
 

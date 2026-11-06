@@ -1,27 +1,20 @@
-import path from "node:path";
-
-/** 環境変数から読む設定。Django版の settings.py に相当。 */
+/** 設定。Node では process.env、Cloudflare Workers では env（wrangler.toml の vars と secret）から読む。 */
 export interface Config {
-  /** SQLite のファイル。":memory:" も可 */
-  dbPath: string;
-  /** アップロード写真の保存先 */
-  mediaRoot: string;
-  /** 本番では true（Cookie に Secure を付ける） */
+  /** true なら Cookie に Secure を付ける */
   production: boolean;
   /** 日付の区切りに使うタイムゾーン */
   timeZone: string;
+  /** 写真1枚の上限（ブラウザで縮小できなかったときの最後の砦） */
   photoMaxBytes: number;
+  /** ブラウザで縮小するときの長辺 */
   photoMaxSide: number;
   workImageMaxSide: number;
 }
 
-export function loadConfig(overrides: Partial<Config> = {}): Config {
-  const env = process.env;
+export function loadConfig(env: Record<string, unknown> = {}, overrides: Partial<Config> = {}): Config {
   return {
-    dbPath: env.HANKEN_DB ?? path.resolve("db.sqlite3"),
-    mediaRoot: env.HANKEN_MEDIA_ROOT ?? path.resolve("media"),
-    production: env.NODE_ENV === "production",
-    timeZone: env.HANKEN_TIME_ZONE ?? "Asia/Tokyo",
+    production: env.HANKEN_ENV === "production",
+    timeZone: typeof env.HANKEN_TIME_ZONE === "string" && env.HANKEN_TIME_ZONE ? env.HANKEN_TIME_ZONE : "Asia/Tokyo",
     photoMaxBytes: 10 * 1024 * 1024,
     photoMaxSide: 1280,
     workImageMaxSide: 800,

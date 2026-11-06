@@ -1,29 +1,66 @@
-/** パスワード・ログイン状態（セッション）・ひとことメッセージ。Django の auth / sessions / messages の代わり。 */
-import { randomBytes, scrypt as scryptCb, timingSafeEqual, type ScryptOptions } from "node:crypto";
+/**
+ * パスワード・ログイン状態（セッション）・ひとことメッセージ。Django の auth / sessions / messages の代わり。
+ * Cloudflare Workers でも動くよう、Web 標準の API（Web Crypto など）だけを使う。
+ */
 import type { Context, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { AppEnv } from "./context.ts";
 import type { User } from "./models.ts";
 
-// ---------- パスワード ----------
+// ---------- 文字列とバイト ----------
 
-const scrypt = (pw: string, salt: Buffer, keylen: number, opts: ScryptOptions) =>
-  new Promise<Buffer>((ok, ng) => scryptCb(pw, salt, keylen, opts, (err, key) => (err ? ng(err) : ok(key))));
+const enc = new TextEncoder();
+const dec = new TextDecoder();
 
-const N = 16384, R = 8, P = 1, KEYLEN = 32;
+function toBase64(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+
+function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
+  const s = atob(b64);
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out;
+}
+
+const toBase64Url = (bytes: Uint8Array) => toBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const fromBase64Url = (s: string) => fromBase64(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4));
+
+const randomBytes = (n: number) => crypto.getRandomValues(new Uint8Array(n));
+
+// ---------- パスワード（PBKDF2-SHA256） ----------
+
+// Cloudflare Workers の Web Crypto は 100,000 回までに対応
+const ITERATIONS = 100_000;
+
+async function pbkdf2(pw: string, salt: Uint8Array<ArrayBuffer>, iterations: number, bytes: number): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey("raw", enc.encode(pw), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, bytes * 8);
+  return new Uint8Array(bits);
+}
+
+/** 長さが同じなら、中身に関係なく同じ時間で比べる */
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i]! ^ b[i]!;
+  return diff === 0;
+}
 
 export async function hashPassword(pw: string): Promise<string> {
   const salt = randomBytes(16);
-  const key = await scrypt(pw, salt, KEYLEN, { N, r: R, p: P });
-  return `scrypt$${N}$${R}$${P}$${salt.toString("base64")}$${key.toString("base64")}`;
+  const hash = await pbkdf2(pw, salt, ITERATIONS, 32);
+  return `pbkdf2_sha256$${ITERATIONS}$${toBase64(salt)}$${toBase64(hash)}`;
 }
 
 export async function checkPassword(pw: string, stored: string): Promise<boolean> {
-  const [algo, n, r, p, salt, hash] = stored.split("$");
-  if (algo !== "scrypt" || !salt || !hash) return false;
-  const expected = Buffer.from(hash, "base64");
-  const key = await scrypt(pw, Buffer.from(salt, "base64"), expected.length, { N: Number(n), r: Number(r), p: Number(p) });
-  return key.length === expected.length && timingSafeEqual(key, expected);
+  const [algo, iter, salt, hash] = stored.split("$");
+  if (algo !== "pbkdf2_sha256" || !iter || !salt || !hash) return false;
+  const expected = fromBase64(hash);
+  const actual = await pbkdf2(pw, fromBase64(salt), Number(iter), expected.length);
+  return sameBytes(actual, expected);
 }
 
 /** パスワードの決まり（Django の標準バリデータと同じ4つ） */
@@ -56,37 +93,26 @@ export function validatePassword(pw: string, username: string): string[] {
 const SESSION_COOKIE = "sessionid";
 const SESSION_DAYS = 14;
 
-export function login(c: Context<AppEnv>, user: User) {
+export async function login(c: Context<AppEnv>, user: User) {
   const { repo, config } = c.var.app;
-  const id = randomBytes(32).toString("base64url");
+  const id = toBase64Url(randomBytes(32));
   const expires = new Date(Date.now() + SESSION_DAYS * 864e5);
-  repo.db.prepare("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)").run(id, user.id, expires.toISOString());
-  setCookie(c, SESSION_COOKIE, id, {
-    path: "/", httpOnly: true, sameSite: "Lax", secure: config.production, expires,
-  });
+  await repo.createSession(id, user.id, expires.toISOString());
+  setCookie(c, SESSION_COOKIE, id, { path: "/", httpOnly: true, sameSite: "Lax", secure: config.production, expires });
   c.set("user", user);
 }
 
-export function logout(c: Context<AppEnv>) {
+export async function logout(c: Context<AppEnv>) {
   const id = getCookie(c, SESSION_COOKIE);
-  if (id) c.var.app.repo.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
-  deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  if (id) await c.var.app.repo.deleteSession(id);
+  deleteCookie(c, SESSION_COOKIE, { path: "/", secure: c.var.app.config.production });
   c.set("user", null);
 }
 
 /** Cookie からログイン中のユーザーを読む */
 export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
   const id = getCookie(c, SESSION_COOKIE);
-  let user: User | null = null;
-  if (id) {
-    const { repo } = c.var.app;
-    const s = repo.db.prepare("SELECT user_id, expires_at FROM sessions WHERE id = ?").get(id) as
-      | { user_id: number; expires_at: string }
-      | undefined;
-    if (s && s.expires_at > new Date().toISOString()) user = repo.userById(s.user_id);
-    else if (s) repo.db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
-  }
-  c.set("user", user);
+  c.set("user", id ? await c.var.app.repo.sessionUser(id) : null);
   await next();
 };
 
@@ -129,7 +155,7 @@ export const messages: MiddlewareHandler<AppEnv> = async (c, next) => {
   let incoming: Message[] = [];
   if (raw) {
     try {
-      const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+      const parsed = JSON.parse(dec.decode(fromBase64Url(raw)));
       if (Array.isArray(parsed))
         incoming = parsed
           .filter((m) => m && typeof m.text === "string")
@@ -142,11 +168,10 @@ export const messages: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.set("outMessages", []);
   await next();
   const out = c.var.outMessages;
+  const secure = c.var.app.config.production;
   if (out.length) {
-    setCookie(c, MSG_COOKIE, Buffer.from(JSON.stringify(out)).toString("base64url"), {
-      path: "/", httpOnly: true, sameSite: "Lax", secure: c.var.app.config.production,
-    });
+    setCookie(c, MSG_COOKIE, toBase64Url(enc.encode(JSON.stringify(out))), { path: "/", httpOnly: true, sameSite: "Lax", secure });
   } else if (raw) {
-    deleteCookie(c, MSG_COOKIE, { path: "/" });
+    deleteCookie(c, MSG_COOKIE, { path: "/", secure });
   }
 };

@@ -104,14 +104,14 @@ export const WorkForm: FC<{ ctx: PageCtx; work: Work | null; form: FormState }> 
           <div class="photo-row">
             <div class="photo-prev" data-preview-for="id_image"></div>
             <div class="photo-side">
-              <label class="filebtn"><input type="file" name="image" id="id_image" accept="image/*" />画像を選ぶ</label>
+              <label class="filebtn"><input type="file" name="image" id="id_image" accept="image/*" data-max-side={800} />画像を選ぶ</label>
               {work?.image && (
                 <label class="check small"><input type="checkbox" name="image_clear" /> アップロードした画像を削除する</label>
               )}
             </div>
           </div>
         </div>
-        <span class="help small muted">表紙やポスターなど。縦長（2:3）がきれいに収まります。保存時に長辺800pxへ縮小します。</span>
+        <span class="help small muted">表紙やポスターなど。縦長（2:3）がきれいに収まります。選ぶと長辺800pxに縮小してから送ります。</span>
         <Errs list={form.errors.image} />
 
         <label class="field" for="id_image_url">

@@ -1,0 +1,4 @@
+# `npm run dev:cf`（wrangler dev）で使う値。.dev.vars という名前でコピーして書き換える。
+# Neon の開発用ブランチの接続文字列を入れておくと、本番のデータに触れずに試せる。
+DATABASE_URL=postgresql://USER:PASSWORD@HOST.neon.tech/neondb?sslmode=require
+HANKEN_ENV=development
