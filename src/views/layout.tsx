@@ -48,6 +48,9 @@ export const Layout: FC<{ ctx: PageCtx; title?: string; children?: Child }> = ({
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
         <title>{title ? `${title}｜感情の半券` : "感情の半券"}</title>
+        <link rel="icon" type="image/png" sizes="32x32" href="/static/hanken/icon-32.png" />
+        <link rel="icon" type="image/png" sizes="192x192" href="/static/hanken/icon-192.png" />
+        <link rel="apple-touch-icon" href="/static/hanken/apple-touch-icon.png" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
           rel="stylesheet"
